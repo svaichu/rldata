@@ -6,7 +6,7 @@ class RLDataDistributed(RLData):
     A distributed version of RLData that uses PyTorch's dist modules
     for communication between processes.
     """
-    def __init__(self, name="agent", device="cuda"):
+    def __init__(self, name="agent", data_config=None, buffer_size=1000):
         """
         Initialize the online buffer for distributed training.
         This method is called to set up the buffer for distributed training provided by pytorch.
@@ -15,7 +15,7 @@ class RLDataDistributed(RLData):
             rank (int): The rank of the current process.
             world_size (int): The total number of processes.
         """
-        super().__init__(name=name, device=device)
+        super().__init__(data_config=data_config, buffer_size=buffer_size)
         world_size = 2
         if name == "agent":
             self.rank = 0
@@ -29,6 +29,61 @@ class RLDataDistributed(RLData):
         else:   
             dist.init_process_group("gloo", rank=self.rank, world_size=world_size, init_method='tcp://10.5.0.2:8000')
     
+    def sendBufferToAgent(self):
+        """
+        Send the data to the agent.        
+        """
+        # send the observation tensor to the agent
+        op_list = []
+        idx = 0
+        length_of_buffer = len(self.replay_buffer)
+        req = dist.isend(tensor=torch.tensor(length_of_buffer), dst=self.AGENT_RANK)
+        req.wait()
+        print("length sent successfully")
+        for modality_label, modality in self._modality_configs.items():
+            for key in modality.modality_keys:
+                if modality_label not in self.replay_buffer:
+                    raise ValueError(f"Modality {modality_label} not found in the replay buffer.")
+                if key not in self.replay_buffer[modality_label]:
+                    raise ValueError(f"Key {key} not found in modality {modality_label} of the replay buffer.")
+                print("lalalal")
+                send_op = dist.P2POp(dist.isend, tensor=self.replay_buffer[modality_label][key][idx], peer=self.AGENT_RANK)
+                op_list.append(send_op)
+        reqs = dist.batch_isend_irecv(op_list)
+        print("[INFO] Sending buffer to agent with length:", length_of_buffer)
+        for req in reqs:
+            req.wait()
+        print("[INFO] Buffer sent to agent successfully.")
+
+    def recvBufferFromSim(self):
+        """
+        Receive the data from the simulator.
+        
+        This method is called to receive the data from the simulator process.
+        It blocks until the data is received.
+        """
+        # first receive the length of the buffer
+        length_of_buffer_tensor = torch.tensor(0)
+        req = dist.irecv(tensor=length_of_buffer_tensor, src=self.SIMULATOR_RANK)
+        req.wait()
+        print("[INFO] Length of buffer received from simulator:", length_of_buffer_tensor.item())
+        length_of_buffer = length_of_buffer_tensor.item()
+
+        self.createZerosBuffer(length_of_buffer)
+        print("[INFO] Created zero buffer with length:", length_of_buffer)
+        op_list = []
+        for modality_label, modality in self._modality_configs.items():
+            for key in modality.modality_keys:
+                if modality_label not in self.replay_buffer:
+                    raise ValueError(f"Modality {modality_label} not found in the replay buffer.")
+                if key not in self.replay_buffer[modality_label]:
+                    raise ValueError(f"Key {key} not found in modality {modality_label} of the replay buffer.")
+                recv_op = dist.P2POp(dist.irecv, tensor=self.replay_buffer[modality_label][key], peer=self.SIMULATOR_RANK)
+                op_list.append(recv_op)
+        print("[INFO] Receiving buffer from simulator with length:", length_of_buffer)
+        reqs = dist.batch_isend_irecv(op_list)
+        for req in reqs:
+            req.wait()
 
     def sendObject(self, obj, dst=1):
         """
@@ -74,38 +129,6 @@ class RLDataDistributed(RLData):
         """
         dist.recv(tensor=trgt_tensor, src=src)
         return trgt_tensor
-
-    def sendBufferToAgent(self):
-        """
-        Send the data to the agent.        
-        """
-        # send the observation tensor to the agent
-        op_list = []
-        idx = 0
-        length_of_buffer = len(self.replay_buffer)
-        dist.send(tensor=torch.tensor(length_of_buffer), dst=self.AGENT_RANK)
-        for modality_label, modality in self._modality_configs.items():
-            for key in modality.modality_keys:
-                if modality_label not in self.replay_buffer:
-                    raise ValueError(f"Modality {modality_label} not found in the replay buffer.")
-                if key not in self.replay_buffer[modality_label]:
-                    raise ValueError(f"Key {key} not found in modality {modality_label} of the replay buffer.")
-                send_op = dist.P2POp(dist.isend, tensor=self.replay_buffer[modality_label][key][idx], peer=self.AGENT_RANK)
-                op_list.append(send_op)
-
-    def recvBufferFromSim(self):
-        """
-        Receive the data from the simulator.
-        
-        This method is called to receive the data from the simulator process.
-        It blocks until the data is received.
-        """
-        # first receive the length of the buffer
-        length_of_buffer_tensor = torch.tensor(0)
-        dist.recv(tensor=length_of_buffer_tensor, src=self.SIMULATOR_RANK)
-        print("[INFO] Length of buffer received from simulator:", length_of_buffer_tensor.item())
-        length_of_buffer = length_of_buffer_tensor.item()
-        self.createEmptyBuffer(length_of_buffer)
 
     def sendDictOneByOne(self, data: dict, dst=1):
         """
