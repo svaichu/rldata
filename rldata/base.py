@@ -34,7 +34,7 @@ class RLData():
         self._modality_configs: dict[str, ModalityConfig] = data_config.modality_config()
         self.data = None  # Placeholder for data storage
         self.initialize()
-        self.replay_buffer = ReplayBuffer(storage=LazyTensorStorage(buffer_size))
+        self.replay_buffer = ReplayBuffer(storage=LazyTensorStorage(buffer_size), batch_size=1)
 
     # def __add__(self
 
@@ -56,13 +56,15 @@ class RLData():
         """
         new_dict = {}
         for modality_label, modality in self._modality_configs.items():
+            if modality_label == "language":
+                continue
             new_dict[modality_label] = {}
             for idx, key in enumerate(modality.modality_keys):
                 if modality_label in ["video", "state", "action"]:
                     shape = [batch_size] + modality.shapes_list[idx]
                     new_dict[modality_label][key] = torch.zeros(shape, dtype=torch.float32)
-        for _ in range(batch_size):
-            self.replay_buffer.extend(new_dict)
+        # for _ in range(batch_size):
+        self.replay_buffer.extend(new_dict)
 
 
     def process_obs_from_isaac(self, obs_dict): 
@@ -94,6 +96,17 @@ class RLData():
         """
         # processed_obs = self.process_obs_from_isaac(obs_dict)
         print("Adding to replay buffer with keys: ", processed_obs.keys())
+        # Check if the processed_obs is in the expected format
+        if not isinstance(processed_obs, dict):
+            raise ValueError("Processed observations must be a dictionary.")
+        for modality_label, modality in self._modality_configs.items():
+            if modality_label == "language":
+                continue
+            if modality_label not in processed_obs:
+                raise ValueError(f"Processed observations missing modality: {modality_label}")
+            for key in modality.modality_keys:
+                if key not in processed_obs[modality_label]:
+                    raise ValueError(f"Processed observations missing key: {key} in modality: {modality_label}")
         self.replay_buffer.extend(processed_obs)
 
     def toGR00T(self):
@@ -110,6 +123,15 @@ class RLData():
                 elif modality_label == "language":
                     new_dict[modality_label][key] = "do the fucking task"
         return new_dict
+
+    def emptyReplayBuffer(self):
+        """
+        Empty the replay buffer.
+        
+        This method is called to clear the replay buffer, typically at the end of an episode or when starting a new one.
+        """
+        self.replay_buffer.clear()
+        # self.initialize()
 
     def makeVideo(self, key, video_dir, fps=30):
         """
