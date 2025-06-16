@@ -232,3 +232,17 @@ class RLDataDistributed(RLData):
         """
         # send action to the simulator
         self.sendData(data=action, dst=self.SIMULATOR_RANK)
+    
+    def recvAction(self):
+        """
+        Receive action from the agent process.
+        
+        This method is called to receive action from the agent process.
+        It blocks until the data is received.
+        
+        Returns:
+            torch.Tensor: The received action.
+        """
+        # wait for action from the agent
+        self.action = self.recvData(src=self.AGENT_RANK, trgt_tensor=self.action)
+        return self.action
