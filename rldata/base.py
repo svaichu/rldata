@@ -34,6 +34,8 @@ class RLData():
         self._modality_configs: dict[str, ModalityConfig] = data_config.modality_config()
         self.data = None  # Placeholder for data storage
         self.initialize()
+        print("Data manager setup with modalities:")
+        self.printModalityConfig()
         self.replay_buffer = ReplayBuffer(storage=LazyTensorStorage(buffer_size), batch_size=1)
 
     # def __add__(self
@@ -49,12 +51,13 @@ class RLData():
                 # create dict maping key to modality_label
                 self._key_to_modality[key] = modality_label
     
-    def createZerosBuffer(self, batch_size=1):
+    def addZerosBuffer(self, batch_size=1):
         """
         Create a zero-initialized buffer for each modality.
         This method is called to set up the buffer before receiving data.
         """
         new_dict = {}
+        current_length = len(self.replay_buffer)
         for modality_label, modality in self._modality_configs.items():
             if modality_label == "language":
                 continue
@@ -63,9 +66,57 @@ class RLData():
                 if modality_label in ["video", "state", "action"]:
                     shape = [batch_size] + modality.shapes_list[idx]
                     new_dict[modality_label][key] = torch.zeros(shape, dtype=torch.float32)
-        # for _ in range(batch_size):
+        # self.printStructureDict(new_dict)
         self.replay_buffer.extend(new_dict)
+        new_length = len(self.replay_buffer)
 
+        zero_index_start = current_length
+        zero_index_end = new_length
+        return(zero_index_start, zero_index_end)
+    
+    def printStructureDict(self, dict_obj):
+        """
+        Print the structure of a dict, where values are also dicts of {str: torch.Tensor}.
+        Args:
+            dict_obj (dict): The dictionary to print.
+        """
+        print("Structure of the dictionary:")
+        for key, value in dict_obj.items():
+            if isinstance(value, dict):
+                print(f"{key}:")
+                for sub_key, sub_value in value.items():
+                    print(f"  {sub_key}: {sub_value.shape} ({sub_value.dtype})")
+            else:
+                print(f"{key}: {value.shape} ({value.dtype})")
+    
+    def printReplayBufferStructure(self):
+        """
+        Print the structure of the replay buffer.
+        This method is called to print the structure of the replay buffer.
+        """
+        print("Structure of the replay buffer:")
+        for modality_label, modality in self._modality_configs.items():
+            if modality_label == "language":
+                continue
+            print(f"{modality_label}:")
+            for key in modality.modality_keys:
+                if key in self.replay_buffer[modality_label]:
+                    value = self.replay_buffer[modality_label][key]
+                    print(f"  {key}: {value.shape} ({value.dtype})")
+                else:
+                    print(f"  {key}: Not found in replay buffer")
+    
+    def printModalityConfig(self):
+        """
+        Print the modality configuration.
+        This method is called to print the modality configuration.
+        """
+        print("Modality configuration:")
+        for modality_label, modality in self._modality_configs.items():
+            print(f"{modality_label}:")
+            print(f"  Modality keys: {modality.modality_keys}")
+            print(f"  Shapes list: {modality.shapes_list}")
+            print(f"  Delta indices: {modality.delta_indices}")
 
     def process_obs_from_isaac(self, obs_dict): 
         """
@@ -95,7 +146,7 @@ class RLData():
             obs_dict (dict): The observation dictionary from Isaac Gym.
         """
         # processed_obs = self.process_obs_from_isaac(obs_dict)
-        print("Adding to replay buffer with keys: ", processed_obs.keys())
+        # print("Adding to replay buffer with keys: ", processed_obs.keys())
         # Check if the processed_obs is in the expected format
         if not isinstance(processed_obs, dict):
             raise ValueError("Processed observations must be a dictionary.")

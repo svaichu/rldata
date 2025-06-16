@@ -39,16 +39,22 @@ class RLDataDistributed(RLData):
         length_of_buffer = len(self.replay_buffer)
         req = dist.isend(tensor=torch.tensor(length_of_buffer), dst=self.AGENT_RANK)
         req.wait()
+        dist.barrier()  # Ensure all processes are synchronized before sending data
         print("length sent successfully")
         for modality_label, modality in self._modality_configs.items():
+            if modality_label == "language":
+                print("[DEBUG] Skipping language modality for sending.")
+                continue
             for key in modality.modality_keys:
-                if modality_label not in self.replay_buffer:
-                    raise ValueError(f"Modality {modality_label} not found in the replay buffer.")
-                if key not in self.replay_buffer[modality_label]:
-                    raise ValueError(f"Key {key} not found in modality {modality_label} of the replay buffer.")
-                print("lalalal")
-                send_op = dist.P2POp(dist.isend, tensor=self.replay_buffer[modality_label][key][idx], peer=self.AGENT_RANK)
+                print(key)
+                # if modality_label not in self.replay_buffer:
+                #     raise ValueError(f"Modality {modality_label} not found in the replay buffer.")
+                # if key not in self.replay_buffer[modality_label]:
+                #     raise ValueError(f"Key {key} not found in modality {modality_label} of the replay buffer.")
+                print(f"[DEBUG] Sending {modality_label}:{key} shape={self.replay_buffer[modality_label][key].shape} dtype={self.replay_buffer[modality_label][key].dtype} device={self.replay_buffer[modality_label][key].device}")
+                send_op = dist.P2POp(dist.isend, tensor=self.replay_buffer[modality_label][key], peer=self.AGENT_RANK)
                 op_list.append(send_op)
+        print("[INFO] Setting up send operations for modalities")
         reqs = dist.batch_isend_irecv(op_list)
         print("[INFO] Sending buffer to agent with length:", length_of_buffer)
         for req in reqs:
@@ -66,19 +72,26 @@ class RLDataDistributed(RLData):
         length_of_buffer_tensor = torch.tensor(0)
         req = dist.irecv(tensor=length_of_buffer_tensor, src=self.SIMULATOR_RANK)
         req.wait()
+        dist.barrier()
         print("[INFO] Length of buffer received from simulator:", length_of_buffer_tensor.item())
         length_of_buffer = length_of_buffer_tensor.item()
 
-        self.createZerosBuffer(length_of_buffer)
+        zero_start, zero_end = self.addZerosBuffer(length_of_buffer)
         print("[INFO] Created zero buffer with length:", length_of_buffer)
+        self.printReplayBufferStructure()
         op_list = []
         for modality_label, modality in self._modality_configs.items():
+            if modality_label == "language":
+                print("[DEBUG] Skipping language modality for sending.")
+                continue
             for key in modality.modality_keys:
-                if modality_label not in self.replay_buffer:
-                    raise ValueError(f"Modality {modality_label} not found in the replay buffer.")
-                if key not in self.replay_buffer[modality_label]:
-                    raise ValueError(f"Key {key} not found in modality {modality_label} of the replay buffer.")
-                recv_op = dist.P2POp(dist.irecv, tensor=self.replay_buffer[modality_label][key], peer=self.SIMULATOR_RANK)
+                print(key)
+                # if modality_label not in self.replay_buffer:
+                #     raise ValueError(f"Modality {modality_label} not found in the replay buffer.")
+                # if key not in self.replay_buffer[modality_label]:
+                #     raise ValueError(f"Key {key} not found in modality {modality_label} of the replay buffer.")
+                print(f"[DEBUG] Receiving {modality_label}:{key} shape={self.replay_buffer[modality_label][key].shape} dtype={self.replay_buffer[modality_label][key].dtype} device={self.replay_buffer[modality_label][key].device}")
+                recv_op = dist.P2POp(dist.irecv, tensor=self.replay_buffer[modality_label][key][zero_start:zero_end], peer=self.SIMULATOR_RANK)
                 op_list.append(recv_op)
         print("[INFO] Receiving buffer from simulator with length:", length_of_buffer)
         reqs = dist.batch_isend_irecv(op_list)
